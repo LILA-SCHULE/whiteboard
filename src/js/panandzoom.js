@@ -17,6 +17,7 @@ class PanAndZoom {
 
     // constants
     scale_max = 4;
+    scale_min = 0.5;
     wbWidth;
     wbHeight;
 
@@ -41,6 +42,7 @@ class PanAndZoom {
     zoom_pos_y = 0;
     transform = "";
     lastTool;
+    scale_lock = false;
 
     parent;
     child;
@@ -62,6 +64,8 @@ class PanAndZoom {
         this.wbWidth = wb.settings["width"];
         this.wbHeight = wb.settings["height"];
         this.logZoom();
+        this.updateChildProps();
+        this.updateParentProps();
     }
 
     addZoomListener() {
@@ -93,9 +97,19 @@ class PanAndZoom {
                 this.pinchend();
                 this.applyTransform();
             });
+            return;
+        }
+        if (isMacOS && !isSafari) {
+            window.addEventListener(
+                "wheel",
+                (ev) => {
+                    ev.preventDefault();
+                    this.mouseWheelZoom(ev);
+                },
+                { passive: false }
+            );
         }
         //window.addEventListener("scroll", (ev) => ev.preventDefault());
-
         this.parentHammer.add(new Hammer.Pinch({ threshold: 0, pointers: 2 }));
 
         this.mouseOverlayHammer.get("pan").requireFailure(this.parentHammer.get("pinch"));
@@ -107,7 +121,7 @@ class PanAndZoom {
         });
 
         this.parentHammer.on("pinch", (ev) => {
-            this.pinch();
+            this.pinch(ev);
             this.applyTransform();
         });
 
@@ -169,6 +183,23 @@ class PanAndZoom {
         console.log(zoomInfo);
     }
 
+    setScale(scale_new) {
+        let scale = scale_new;
+        scale = this.scale_max >= scale_new ? scale : this.scale_max;
+        scale = this.scale_min <= scale_new ? scale : this.scale_min;
+        this.scale = scale;
+        this.scale_lock = scale === scale_new ? false : true;
+    }
+
+    mouseWheelZoom(event) {
+        const deltaY = event.deltaY;
+        const scaleAmount = -deltaY / 200;
+        this.setScale(this.scale * (1 + scaleAmount));
+        console.log(this.scale);
+
+        this.applyTransform();
+    }
+
     updateParentProps() {
         this.parentWidth = this.parent.clientWidth;
         this.parentHeight = this.parent.clientHeight;
@@ -190,8 +221,10 @@ class PanAndZoom {
         this.min_pos_y = -(this.wbHeight - this.childHeight + this.zoom_focus_y); //-max_pos_y;//scale_offset_y; //el.clientHeight
 
         // compare the zoom position against the minimum and maximum
+
         this.zoom_pos_x = this.zoom_pos_x < this.max_pos_x ? this.zoom_pos_x : this.max_pos_x;
         this.zoom_pos_x = this.zoom_pos_x > this.min_pos_x ? this.zoom_pos_x : this.min_pos_x;
+
         this.zoom_pos_y = this.zoom_pos_y < this.max_pos_y ? this.zoom_pos_y : this.max_pos_y;
         this.zoom_pos_y = this.zoom_pos_y > this.min_pos_y ? this.zoom_pos_y : this.min_pos_y;
     }
@@ -209,12 +242,15 @@ class PanAndZoom {
         */
         console.log("start");
         this.logZoom();
+
+        this.updateParentProps();
     }
     pinch(ev) {
+        this.updateChildProps();
         this.fitContainerToScreenSize();
 
-        this.scale = Math.max(0.999, Math.min(this.last_scale * ev.scale, this.scale_max));
-
+        this.setScale(this.last_scale * ev.scale);
+        /*
         // aligns upper left corner of the parent element with upper left corner of the child element
         this.scale_offset_x = -(((this.scale - 1) * this.childWidth) / 2 / this.scale);
         this.scale_offset_y = -(((this.scale - 1) * this.childHeight) / 2 / this.scale);
@@ -231,7 +267,9 @@ class PanAndZoom {
         // this.zoom_focus_x = -(((this.scale - 1) * this.childWidth) / 2);
         // this.zoom_focus_y = -(((this.scale - 1) * this.childHeight) / 2);
         console.log(this.zoom_focus_x);
+*/
 
+        this.calculateOffset(ev.clientX, ev.clientY);
         this.correctZoomPosition();
     }
     pinchend() {
@@ -243,7 +281,7 @@ class PanAndZoom {
         this.logZoom();
     }
 
-    panstart() {}
+    panstart() { }
     pan(ev) {
         this.fitContainerToScreenSize();
 
@@ -323,7 +361,7 @@ class PanAndZoom {
             //console.log(posX + "; " + posY);
         }
     }
-    mousetouchend(ev) {}
+    mousetouchend(ev) { }
 
     applyTransform(ev) {
         let transform;
@@ -348,9 +386,29 @@ class PanAndZoom {
 
         if (transform) {
             this.child.style.webkitTransform = transform;
-            this.updateParentProps();
             this.updateChildProps();
         }
+    }
+
+    calculateOffset(cursorX, cursorY) {
+        return;
+        // aligns upper left corner of the parent element with upper left corner of the child element
+        this.scale_offset_x = -(((this.scale - 1) * this.childWidth) / 2 / this.scale);
+        this.scale_offset_y = -(((this.scale - 1) * this.childHeight) / 2 / this.scale);
+
+        // sets zoom to upper left corner
+        this.zoom_offset_x = (this.scale - 1) * (1 / this.scale) * this.childWidth; // - (elWidth*(scale-1)*(4/7));
+        this.zoom_offset_y = (this.scale - 1) * (1 / this.scale) * this.childHeight; //- (elWidth*(scale-1)*(3/7));
+
+        // sets zoom from upper left corner to middle
+        this.zoom_correctMiddle_x = -((this.scale - 1) * 0.5 * this.childWidth); // sets zoom from upper left corner to middle
+        this.zoom_correctMiddle_y = -((this.scale - 1) * 0.5 * this.childHeight);
+
+        // sets zoom focus to cursor position
+        //this.zoom_focus_x = -(cursorX / this.parentWidth) * (this.scale - 1) * this.childWidth;
+        //this.zoom_focus_y = -(cursorY / this.parentHeight) * (this.scale - 1) * this.childHeight;
+        this.zoom_focus_x = -((this.scale - 1) * 0.5 * this.childWidth);
+        this.zoom_focus_y = -((this.scale - 1) * 0.5 * this.childHeight);
     }
 }
 
